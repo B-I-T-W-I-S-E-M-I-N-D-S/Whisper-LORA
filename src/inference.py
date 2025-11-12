@@ -1,5 +1,6 @@
 """
-Enhanced inference script for fine-tuned Whisper model with Bangla support
+Enhanced batch inference script for fine-tuned Whisper model with Bangla support
+Processes entire folder and exports results to CSV
 """
 import argparse
 import os
@@ -9,6 +10,9 @@ import torchaudio
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from peft import PeftModel
 from pathlib import Path
+import pandas as pd
+from datetime import datetime
+import glob
 
 # Set UTF-8 encoding for proper Bangla text display
 if sys.platform == "win32":
@@ -73,15 +77,12 @@ def preprocess_audio(audio_path, target_sr=16000):
 
 def transcribe_audio(audio_path, model, processor, device, language="bn", task="transcribe"):
     """Transcribe a single audio file"""
-    print(f"\n🎤 Transcribing: {audio_path}")
-    
     try:
         # Preprocess audio
         audio_array, sampling_rate = preprocess_audio(audio_path)
         
         # Get audio duration
         duration = len(audio_array) / sampling_rate
-        print(f"📊 Audio duration: {duration:.2f} seconds")
         
         # Process audio
         inputs = processor(
@@ -102,12 +103,11 @@ def transcribe_audio(audio_path, model, processor, device, language="bn", task="
         )
         
         # Generate transcription
-        print("⏳ Generating transcription...")
         with torch.no_grad():
             generated_ids = model.generate(
                 input_features,
                 forced_decoder_ids=forced_decoder_ids,
-                max_length=448,  # Increased for longer transcriptions
+                max_length=448,
                 num_beams=5,
                 do_sample=False,
                 temperature=0.0,
@@ -124,32 +124,103 @@ def transcribe_audio(audio_path, model, processor, device, language="bn", task="
         # Clean up transcription
         transcription = transcription.strip()
         
-        return transcription
+        return transcription, duration
         
     except Exception as e:
         print(f"❌ Error transcribing {audio_path}: {e}")
+        return None, 0
+
+def get_audio_files(folder_path):
+    """Get all audio files from folder"""
+    audio_extensions = ['*.wav', '*.mp3', '*.flac', '*.m4a', '*.ogg', '*.opus', '*.wma', '*.aac']
+    audio_files = []
+    
+    for ext in audio_extensions:
+        audio_files.extend(glob.glob(os.path.join(folder_path, ext)))
+        audio_files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
+    
+    return sorted(audio_files)
+
+def process_folder(folder_path, model, processor, device, language="bn", task="transcribe"):
+    """Process all audio files in a folder"""
+    # Get all audio files
+    audio_files = get_audio_files(folder_path)
+    
+    if not audio_files:
+        print(f"❌ No audio files found in {folder_path}")
+        return None
+    
+    print(f"\n📁 Found {len(audio_files)} audio files")
+    print("=" * 70)
+    
+    # Store results
+    results = []
+    
+    # Process each file
+    for idx, audio_path in enumerate(audio_files, 1):
+        filename = os.path.basename(audio_path)
+        print(f"\n[{idx}/{len(audio_files)}] 🎤 Processing: {filename}")
+        
+        transcription, duration = transcribe_audio(
+            audio_path, 
+            model, 
+            processor, 
+            device,
+            language=language,
+            task=task
+        )
+        
+        if transcription:
+            print(f"✓ Duration: {duration:.2f}s")
+            print(f"✓ Transcription: {transcription[:100]}{'...' if len(transcription) > 100 else ''}")
+            
+            results.append({
+                'audio_file': filename,
+                'transcription': transcription
+            })
+        else:
+            print(f"✗ Failed to transcribe")
+            results.append({
+                'audio_file': filename,
+                'transcription': '[ERROR: Transcription failed]'
+            })
+    
+    return results
+
+def save_to_csv(results, output_path):
+    """Save transcription results to CSV with proper UTF-8 encoding for Bangla"""
+    try:
+        # Create DataFrame
+        df = pd.DataFrame(results)
+        
+        # Save to CSV with UTF-8 encoding and BOM for Excel compatibility
+        df.to_csv(
+            output_path, 
+            index=False, 
+            encoding='utf-8-sig',  # UTF-8 with BOM for Excel
+            quoting=1  # Quote all fields to preserve line breaks
+        )
+        
+        print(f"\n💾 Transcriptions saved to: {output_path}")
+        print(f"📊 Total files processed: {len(results)}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error saving CSV: {e}")
         import traceback
         traceback.print_exc()
-        return None
-
-def save_transcription(transcription, output_file):
-    """Save transcription to file with UTF-8 encoding"""
-    try:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(transcription)
-        print(f"💾 Transcription saved to: {output_file}")
-    except Exception as e:
-        print(f"❌ Error saving transcription: {e}")
+        return False
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Transcribe audio files using fine-tuned Whisper model for Bangla",
+        description="Batch transcribe audio files using fine-tuned Whisper model for Bangla",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python inference.py --audio_file audio.mp3
-  python inference.py --audio_file audio.wav --output transcription.txt
-  python inference.py --audio_file audio.mp3 --model_dir ./my-model --language bn
+  python inference.py --folder_path ./audio_files
+  python inference.py --folder_path ./audio_files --output transcriptions.csv
+  python inference.py --folder_path ./audio_files --model_dir ./my-model --language bn
         """
     )
     parser.add_argument(
@@ -159,16 +230,16 @@ Examples:
         help="Directory containing the fine-tuned model (default: ./whisper-bangla-LoRA)"
     )
     parser.add_argument(
-        "--audio_file",
+        "--folder_path",
         type=str,
         required=True,
-        help="Path to audio file to transcribe (supports .wav, .mp3, .flac, etc.)"
+        help="Path to folder containing audio files"
     )
     parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help="Output file path to save transcription (optional)"
+        help="Output CSV file path (default: transcriptions_TIMESTAMP.csv)"
     )
     parser.add_argument(
         "--language",
@@ -188,41 +259,46 @@ Examples:
     
     # Print header
     print("=" * 70)
-    print("🎯 Bangla Whisper Transcription System")
+    print("🎯 Bangla Whisper Batch Transcription System")
     print("=" * 70)
+    
+    # Check if folder exists
+    if not os.path.exists(args.folder_path):
+        print(f"❌ Folder not found: {args.folder_path}")
+        sys.exit(1)
     
     try:
         # Load model
         model, processor, device = load_model(args.model_dir)
         
-        # Transcribe audio
-        transcription = transcribe_audio(
-            args.audio_file, 
-            model, 
-            processor, 
+        # Process folder
+        results = process_folder(
+            args.folder_path,
+            model,
+            processor,
             device,
             language=args.language,
             task=args.task
         )
         
-        if transcription:
-            # Display transcription
-            print(f"\n{'=' * 70}")
-            print(f"📝 Transcription:")
-            print(f"{'=' * 70}")
-            print(transcription)
-            print(f"{'=' * 70}\n")
-            
-            # Save to file if output path is specified
+        if results:
+            # Generate output filename if not specified
             if args.output:
-                save_transcription(transcription, args.output)
+                output_path = args.output
             else:
-                # Auto-save with same name as audio file
-                audio_path = Path(args.audio_file)
-                output_path = audio_path.with_suffix('.txt')
-                save_transcription(transcription, output_path)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = f"transcriptions_{timestamp}.csv"
+            
+            # Save to CSV
+            if save_to_csv(results, output_path):
+                print("\n" + "=" * 70)
+                print("✅ Batch transcription completed successfully!")
+                print("=" * 70)
+            else:
+                print("\n❌ Failed to save results to CSV")
+                sys.exit(1)
         else:
-            print("❌ Failed to transcribe audio")
+            print("\n❌ No transcriptions generated")
             sys.exit(1)
             
     except Exception as e:
@@ -230,8 +306,6 @@ Examples:
         import traceback
         traceback.print_exc()
         sys.exit(1)
-    
-    print("✅ Transcription completed successfully!")
 
 if __name__ == "__main__":
     main()
