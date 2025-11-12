@@ -13,9 +13,9 @@ def main():
     train_parser = subparsers.add_parser("train", help="Fine-tune Whisper model with LoRA on custom Bangla dataset")
     
     # Custom dataset paths
-    train_parser.add_argument("--audio_dir", type=str, default='/content/Train/', 
+    train_parser.add_argument("--audio_dir", type=str, default='/kaggle/working/Train/', 
                             help="Path to audio directory containing region subfolders")
-    train_parser.add_argument("--annotation_dir", type=str, default='/content/Train_annotation/', 
+    train_parser.add_argument("--annotation_dir", type=str, default='/kaggle/working/Train_annotation/', 
                             help="Path to annotation directory containing CSV files")
     
     # Training parameters
@@ -54,9 +54,9 @@ def main():
     eval_parser = subparsers.add_parser("eval", help="Evaluate LoRA fine-tuned Whisper model")
     
     # Custom dataset paths for evaluation
-    eval_parser.add_argument("--audio_dir", type=str, default='/content/Train/', 
+    eval_parser.add_argument("--audio_dir", type=str, default='/kaggle/working/Train/', 
                            help="Path to audio directory containing region subfolders")
-    eval_parser.add_argument("--annotation_dir", type=str, default='/content/Train_annotation/', 
+    eval_parser.add_argument("--annotation_dir", type=str, default='/kaggle/working/Train_annotation/', 
                            help="Path to annotation directory containing CSV files")
     
     # Evaluation parameters
